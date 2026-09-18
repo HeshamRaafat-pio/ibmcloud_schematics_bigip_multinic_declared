@@ -304,3 +304,22 @@ variable "encryption_key_crn" {
 #  sensitive   = true
   description = "The crn of the encryption key"
 } 
+# Placement Group Variable
+variable "placement_group_id" {
+  type        = string
+  description = "Optional ID of an existing VPC Placement Group where the F5 VSI will be deployed."
+  default     = null
+}
+
+# Static IP Variables
+variable "mgmt_primary_ip" {
+  type        = string
+  description = "Optional explicit IP address for the primary/management interface."
+  default     = null
+}
+
+variable "data_interface_ips" {
+  type        = list(string)
+  description = "Optional list of explicit IP addresses for secondary/data interfaces (in order)."
+  default     = []
+}
