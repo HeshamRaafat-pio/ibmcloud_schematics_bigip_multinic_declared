@@ -128,6 +128,7 @@ data "template_file" "user_data" {
 
 # create compute instance
 resource "ibm_is_instance" "f5_ve_instance" {
+  placement_group = var.placement_group_id
   name           = var.instance_name
   resource_group = data.ibm_resource_group.group.id
   image          = local.image_id
@@ -144,6 +145,35 @@ resource "ibm_is_instance" "f5_ve_instance" {
       subnet            = network_interfaces.value
       security_groups   = [ibm_is_security_group.f5_open_sg.id]
       allow_ip_spoofing = true
+    }
+  }
+# 2. Assign IP to Management / Primary Interface
+  primary_network_interface {
+    subnet          = var.management_subnet_id
+    security_groups = var.management_security_groups
+
+    dynamic "primary_ip" {
+      for_each = var.mgmt_primary_ip != null ? [var.mgmt_primary_ip] : []
+      content {
+        address = primary_ip.value
+      }
+    }
+  }
+
+  # 3. Assign IPs to Secondary / Data Interfaces
+  dynamic "network_interfaces" {
+    for_each = { for idx, net in var.secondary_subnets : idx => net }
+    content {
+      name            = "eth${network_interfaces.key + 1}"
+      subnet          = network_interfaces.value.subnet_id
+      security_groups = network_interfaces.value.security_groups
+
+      dynamic "primary_ip" {
+        for_each = length(var.data_interface_ips) > network_interfaces.key ? [var.data_interface_ips[network_interfaces.key]] : []
+        content {
+          address = primary_ip.value
+        }
+      }
     }
   }
   boot_volume {
