@@ -90,13 +90,11 @@ locals {
 }
 
 # discovery the 1st address on the default route subnet because IBM does not
-# supply the DHCPv4 routers option correctly on non-primary interfaces. This
-# is a bug in IBM they need to fix.
+# supply the DHCPv4 routers option correctly on non-primary interfaces.
 data "ibm_is_subnet" "default_route_subnet" {
   identifier = element(local.secondary_subnets, length(local.secondary_subnets) - 1)
 }
-# IBM does not tell you what the default gateway address for each subnet should
-# be, but by undocumented convention we will use the 1st host address in the subnet
+
 locals {
   default_gateway_ipv4_address = cidrhost(data.ibm_is_subnet.default_route_subnet.ipv4_cidr_block, 1)
 }
@@ -104,7 +102,7 @@ locals {
 data "template_file" "user_data" {
   template = local.template_file
   vars = {
-    tmos_admin_password     = local.admin_password
+    tmos_admin_password       = local.admin_password
     configsync_interface    = "1.1"
     hostname                = var.hostname
     domain                  = var.domain
@@ -128,44 +126,40 @@ data "template_file" "user_data" {
 
 # create compute instance
 resource "ibm_is_instance" "f5_ve_instance" {
-  placement_group = var.placement_group_id
   name           = var.instance_name
+  profile        = data.ibm_is_instance_profile.instance_profile.id
   resource_group = data.ibm_resource_group.group.id
   image          = local.image_id
-  profile        = data.ibm_is_instance_profile.instance_profile.id
+  vpc            = data.ibm_is_subnet.f5_management_subnet.vpc
+  zone           = data.ibm_is_subnet.f5_management_subnet.zone
+  keys           = [data.ibm_is_ssh_key.ssh_pub_key.id]
+  user_data      = data.template_file.user_data.rendered
+
+  # Optional Placement Group support
+  placement_group = var.placement_group_id
+
+  # 1. Management / Primary Interface (with optional static IP support)
   primary_network_interface {
     name            = "management"
     subnet          = data.ibm_is_subnet.f5_management_subnet.id
     security_groups = [ibm_is_security_group.f5_open_sg.id]
-  }
-  dynamic "network_interfaces" {
-    for_each = local.secondary_subnets
-    content {
-      name              = format("data-1-%d", (network_interfaces.key + 1))
-      subnet            = network_interfaces.value
-      security_groups   = [ibm_is_security_group.f5_open_sg.id]
-      allow_ip_spoofing = true
-    }
-  }
-# 2. Assign IP to Management / Primary Interface
-  primary_network_interface {
-    subnet          = var.management_subnet_id
-    security_groups = var.management_security_groups
 
     dynamic "primary_ip" {
-      for_each = var.mgmt_primary_ip != null ? [var.mgmt_primary_ip] : []
+      for_each = var.mgmt_primary_ip != null && var.mgmt_primary_ip != "" ? [var.mgmt_primary_ip] : []
       content {
         address = primary_ip.value
       }
     }
   }
 
-  # 3. Data Interface 1 (External Subnet)
+  # 2. Data Interface 1 (External Subnet)
   dynamic "network_interfaces" {
     for_each = var.external_subnet_id != null && var.external_subnet_id != "" ? [var.external_subnet_id] : []
     content {
-      name   = "eth1-external"
-      subnet = network_interfaces.value
+      name            = "eth1-external"
+      subnet          = network_interfaces.value
+      security_groups = [ibm_is_security_group.f5_open_sg.id]
+      allow_ip_spoofing = true
 
       dynamic "primary_ip" {
         for_each = length(var.data_interface_ips) > 0 ? [var.data_interface_ips[0]] : []
@@ -176,12 +170,14 @@ resource "ibm_is_instance" "f5_ve_instance" {
     }
   }
 
-  # 4. Data Interface 2 (Internal Subnet)
+  # 3. Data Interface 2 (Internal Subnet)
   dynamic "network_interfaces" {
     for_each = var.internal_subnet_id != null && var.internal_subnet_id != "" ? [var.internal_subnet_id] : []
     content {
-      name   = "eth2-internal"
-      subnet = network_interfaces.value
+      name            = "eth2-internal"
+      subnet          = network_interfaces.value
+      security_groups = [ibm_is_security_group.f5_open_sg.id]
+      allow_ip_spoofing = true
 
       dynamic "primary_ip" {
         for_each = length(var.data_interface_ips) > 1 ? [var.data_interface_ips[1]] : []
@@ -192,12 +188,14 @@ resource "ibm_is_instance" "f5_ve_instance" {
     }
   }
 
-  # 5. Data Interface 3 (Cluster Subnet)
+  # 4. Data Interface 3 (Cluster Subnet)
   dynamic "network_interfaces" {
     for_each = var.cluster_subnet_id != null && var.cluster_subnet_id != "" ? [var.cluster_subnet_id] : []
     content {
-      name   = "eth3-cluster"
-      subnet = network_interfaces.value
+      name            = "eth3-cluster"
+      subnet          = network_interfaces.value
+      security_groups = [ibm_is_security_group.f5_open_sg.id]
+      allow_ip_spoofing = true
 
       dynamic "primary_ip" {
         for_each = length(var.data_interface_ips) > 2 ? [var.data_interface_ips[2]] : []
@@ -207,15 +205,13 @@ resource "ibm_is_instance" "f5_ve_instance" {
       }
     }
   }
-}
+
   boot_volume {
     encryption = var.encryption_key_crn == "" ? null : var.encryption_key_crn 
   }
-  vpc        = data.ibm_is_subnet.f5_management_subnet.vpc
-  zone       = data.ibm_is_subnet.f5_management_subnet.zone
-  keys       = [data.ibm_is_ssh_key.ssh_pub_key.id]
-  user_data  = data.template_file.user_data.rendered
+
   depends_on = [ibm_is_security_group_rule.f5_allow_outbound]
+
   timeouts {
     create = "60m"
     delete = "120m"
