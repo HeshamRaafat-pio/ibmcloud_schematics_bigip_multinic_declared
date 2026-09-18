@@ -160,22 +160,54 @@ resource "ibm_is_instance" "f5_ve_instance" {
     }
   }
 
-  # 3. Assign IPs to Secondary / Data Interfaces
+  # 3. Data Interface 1 (External Subnet)
   dynamic "network_interfaces" {
-    for_each = { for idx, net in var.secondary_subnets : idx => net }
+    for_each = var.external_subnet_id != null && var.external_subnet_id != "" ? [var.external_subnet_id] : []
     content {
-      name            = "eth${network_interfaces.key + 1}"
-      subnet          = network_interfaces.value.subnet_id
-      security_groups = network_interfaces.value.security_groups
+      name   = "eth1-external"
+      subnet = network_interfaces.value
 
       dynamic "primary_ip" {
-        for_each = length(var.data_interface_ips) > network_interfaces.key ? [var.data_interface_ips[network_interfaces.key]] : []
+        for_each = length(var.data_interface_ips) > 0 ? [var.data_interface_ips[0]] : []
         content {
           address = primary_ip.value
         }
       }
     }
   }
+
+  # 4. Data Interface 2 (Internal Subnet)
+  dynamic "network_interfaces" {
+    for_each = var.internal_subnet_id != null && var.internal_subnet_id != "" ? [var.internal_subnet_id] : []
+    content {
+      name   = "eth2-internal"
+      subnet = network_interfaces.value
+
+      dynamic "primary_ip" {
+        for_each = length(var.data_interface_ips) > 1 ? [var.data_interface_ips[1]] : []
+        content {
+          address = primary_ip.value
+        }
+      }
+    }
+  }
+
+  # 5. Data Interface 3 (Cluster Subnet)
+  dynamic "network_interfaces" {
+    for_each = var.cluster_subnet_id != null && var.cluster_subnet_id != "" ? [var.cluster_subnet_id] : []
+    content {
+      name   = "eth3-cluster"
+      subnet = network_interfaces.value
+
+      dynamic "primary_ip" {
+        for_each = length(var.data_interface_ips) > 2 ? [var.data_interface_ips[2]] : []
+        content {
+          address = primary_ip.value
+        }
+      }
+    }
+  }
+}
   boot_volume {
     encryption = var.encryption_key_crn == "" ? null : var.encryption_key_crn 
   }
